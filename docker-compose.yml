@@ -1,0 +1,80 @@
+version: '3'
+
+services:
+  db:
+    image: postgres
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    container_name: postgres_db
+
+  django:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    image: django_web
+    environment:
+      - POSTGRES_NAME=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "8000:8000"  # Map the container's port 8000 to the host
+    depends_on:
+      - redis  # Ensure the Django app starts after Redis is ready
+      - db
+    command: gunicorn --env DJANGO_SETTINGS_MODULE=toman_task2.settings -b :8000 toman_task2.wsgi
+
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"  # Map the container's port 6379 to the host
+
+  # Example Celery worker service
+  celery_worker:
+    build:
+      context: .
+    image: django_celery_worker
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - POSTGRES_NAME=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_HOST= 'db:5432'
+    depends_on:
+      - django
+      - redis
+      - db
+    command: celery -A toman_task2 worker -l info
+
+  # Example Celery Beat service for scheduled tasks
+  celery_beat:
+    build:
+      context: .
+    image: django_celery_beat
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - POSTGRES_NAME=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_HOST= 'db:5432'
+    depends_on:
+      - django
+      - redis
+      - db
+    command: celery -A toman_task2 beat --loglevel=debug --scheduler django
+
+  flower:
+    build:
+      context: .
+    command: celery -A toman_task2 flower
+    ports:
+      - "5555:5555"  # Map Flower's web UI port to the host
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0  # Set the Celery broker URL to your Redis service
+    depends_on:
+      - redis  # Ensure Flower starts after Redis is ready
+      - db
